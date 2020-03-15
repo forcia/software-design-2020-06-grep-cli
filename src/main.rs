@@ -17,8 +17,16 @@ fn main() {
     let mut s = String::new();
     match file.read_to_string(&mut s) {
         Err(why) => panic!("couldn't read {}: {}", display, why.to_string()),
-        Ok(_) => print!("{} contains:\n{}", display, s),
+        Ok(_) => {
+            // "you"が含まれている行のみを表示する
+            for line in s.lines(){
+                if line.contains("you") {
+                    println!("{}", line);
+                }
+            }
+        },
     }
+
 
     // `file` goes out of scope, and the "hello.txt" file gets closed
 }
