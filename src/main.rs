@@ -2,6 +2,10 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
+fn check(line:&str, pattern:&str)->bool{
+    line.contains(pattern)
+}
+
 fn main() {
     // Create a path to the desired file
     let path = Path::new("./book/CONTRIBUTING.md");
@@ -20,7 +24,7 @@ fn main() {
         Ok(_) => {
             // "you"が含まれている行のみを表示する
             for line in s.lines(){
-                if line.contains("you") {
+                if check(line, "you") {
                     println!("{}", line);
                 }
             }
@@ -29,4 +33,16 @@ fn main() {
 
 
     // `file` goes out of scope, and the "hello.txt" file gets closed
+}
+
+#[cfg(test)]
+mod test{
+    use super::*;
+
+    #[test]
+    fn test_check(){
+        assert_eq!(true, check("abcdefg", "c"));
+        assert_eq!(true, check("abcdefg", "fg"));
+        assert_eq!(false, check("abcdefg", "Z"));
+    }
 }
