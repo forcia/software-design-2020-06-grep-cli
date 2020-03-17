@@ -3,7 +3,8 @@ use regex::Regex;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
-
+use std::sync::mpsc;
+use std::thread;
 trait MatcherTrait {
     fn execute(&self, line: &str) -> bool;
 }
@@ -43,6 +44,10 @@ enum Matcher<'a> {
     FixedStrings(FixedStringsMatcher<'a>),
 }
 
+struct GrepResult {
+    file_path: String,
+    hit_lines: Vec<String>,
+}
 fn main() {
     let matches = App::new("grep")
         .version(crate_version!())
@@ -61,49 +66,79 @@ fn main() {
                 .index(1),
         )
         .arg(
-            Arg::with_name("FILE")
-                .help("take PATTERNS from FILE")
+            Arg::with_name("FILES")
+                .help("take PATTERNS from FILES")
                 .required(true)
+                .multiple(true)
                 .index(2),
         )
         .get_matches();
 
-    let pattern = match matches.value_of("PATTERNS") {
-        Some(p) => p,
-        None => "",
-    };
-    let file_path = match matches.value_of("FILE") {
-        Some(f) => f,
-        None => "",
-    };
-    let matcher = if matches.is_present("fixed-strings") {
-        Matcher::FixedStrings(FixedStringsMatcher::new(&pattern))
-    } else {
-        Matcher::ExtendedRegexp(ExtendedRegexpMatcher::new(&pattern))
-    };
-    // Create a path to the desired file
-    let path = Path::new(&file_path);
-    let display = path.display();
+    let pattern = matches.value_of("PATTERNS").unwrap().to_string();
+    let file_pathes = matches
+        .values_of("FILES")
+        .unwrap()
+        .map(|x| x.to_string())
+        .collect::<Vec<String>>();
+    let is_fixed_strings_mode = matches.is_present("fixed-strings");
 
-    // Open the path in read-only mode, returns `io::Result<File>`
-    let mut file = match File::open(&path) {
-        Err(why) => panic!("couldn't open {}: {}", display, why.to_string()),
-        Ok(file) => file,
-    };
+    let (tx, rx) = mpsc::channel();
+    let mut handles = vec![];
+    for file_path in file_pathes {
+        let pattern = pattern.clone(); // 'static borrowの回避のため
+        let tx = mpsc::Sender::clone(&tx); // 転送側を複製
+        let handle = thread::spawn(move || {
+            // Create a path to the desired file
+            let path = Path::new(&file_path);
+            let display = path.display();
 
-    // Read the file contents into a string, returns `io::Result<usize>`
-    let mut s = String::new();
-    match file.read_to_string(&mut s) {
-        Err(why) => panic!("couldn't read {}: {}", display, why.to_string()),
-        Ok(_) => {
-            for line in s.lines() {
-                if match &matcher {
-                    Matcher::ExtendedRegexp(m) => m.execute(line),
-                    Matcher::FixedStrings(m) => m.execute(line),
-                } {
-                    println!("{}", line);
+            // Open the path in read-only mode, returns `io::Result<File>`
+            let mut file = match File::open(&path) {
+                Err(why) => panic!("couldn't open {}: {}", display, why.to_string()),
+                Ok(file) => file,
+            };
+
+            let matcher = if is_fixed_strings_mode {
+                Matcher::FixedStrings(FixedStringsMatcher::new(&pattern.as_str()))
+            } else {
+                Matcher::ExtendedRegexp(ExtendedRegexpMatcher::new(&pattern))
+            };
+            let mut result = GrepResult {
+                file_path: file_path.clone(),
+                hit_lines: vec![],
+            };
+            // Read the file contents into a string, returns `io::Result<usize>`
+            let mut s = String::new();
+            // TODO: ディレクトリとファイルを区別する
+            match file.read_to_string(&mut s) {
+                Err(why) => panic!("couldn't read {}: {}", display, why.to_string()),
+                Ok(_) => {
+                    for line in s.lines() {
+                        if match &matcher {
+                            Matcher::ExtendedRegexp(m) => m.execute(line),
+                            Matcher::FixedStrings(m) => m.execute(line),
+                        } {
+                            result.hit_lines.push(line.to_string());
+                            // println!("{}", line);
+                        }
+                    }
                 }
             }
+            tx.send(result).unwrap();
+        });
+        handles.push(handle);
+    }
+    for handle in handles {
+        // TODO: エラー処理をする
+        let _ = handle.join().unwrap();
+        let result = rx.recv().unwrap();
+        // TODO: バッファリングをすると高速化できるらしい https://keens.github.io/blog/2017/10/05/rustdekousokunahyoujunshutsuryoku/
+        if result.hit_lines.len() > 0 {
+            println!("{}", result.file_path);
+            for line in result.hit_lines {
+                println!("{}", line);
+            }
+            println!("");
         }
     }
 }
