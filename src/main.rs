@@ -4,18 +4,43 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
-#[derive(Debug)]
-enum MatchMode {
-    ExtendedRegexp,
-    FixedStrings,
+trait MatcherTrait {
+    fn execute(&self, line: &str) -> bool;
 }
 
-fn match_pattern(line: &str, pattern: &str) -> bool {
-    let re = Regex::new(pattern).unwrap();
-    re.is_match(line)
+struct ExtendedRegexpMatcher {
+    pattern: Regex,
 }
-fn match_fix_string(line: &str, pattern: &str) -> bool {
-    line.contains(pattern)
+impl ExtendedRegexpMatcher {
+    fn new(pattern: &str) -> ExtendedRegexpMatcher {
+        ExtendedRegexpMatcher {
+            pattern: Regex::new(pattern).unwrap(),
+        }
+    }
+}
+impl MatcherTrait for ExtendedRegexpMatcher {
+    fn execute(&self, line: &str) -> bool {
+        self.pattern.is_match(line)
+    }
+}
+
+struct FixedStringsMatcher<'a> {
+    pattern: &'a str,
+}
+impl<'a> FixedStringsMatcher<'a> {
+    fn new(pattern: &str) -> FixedStringsMatcher {
+        FixedStringsMatcher { pattern: pattern }
+    }
+}
+impl<'a> MatcherTrait for FixedStringsMatcher<'a> {
+    fn execute(&self, line: &str) -> bool {
+        line.contains(self.pattern)
+    }
+}
+
+enum Matcher<'a> {
+    ExtendedRegexp(ExtendedRegexpMatcher),
+    FixedStrings(FixedStringsMatcher<'a>),
 }
 
 fn main() {
@@ -43,12 +68,6 @@ fn main() {
         )
         .get_matches();
 
-    let match_mode = if matches.is_present("fixed-strings") {
-        MatchMode::FixedStrings
-    } else {
-        MatchMode::ExtendedRegexp
-    };
-
     let pattern = match matches.value_of("PATTERNS") {
         Some(p) => p,
         None => "",
@@ -57,7 +76,11 @@ fn main() {
         Some(f) => f,
         None => "",
     };
-
+    let matcher = if matches.is_present("fixed-strings") {
+        Matcher::FixedStrings(FixedStringsMatcher::new(&pattern))
+    } else {
+        Matcher::ExtendedRegexp(ExtendedRegexpMatcher::new(&pattern))
+    };
     // Create a path to the desired file
     let path = Path::new(&file_path);
     let display = path.display();
@@ -74,17 +97,11 @@ fn main() {
         Err(why) => panic!("couldn't read {}: {}", display, why.to_string()),
         Ok(_) => {
             for line in s.lines() {
-                match match_mode {
-                    MatchMode::ExtendedRegexp => {
-                        if match_pattern(line, &pattern) {
-                            println!("{}", line);
-                        }
-                    }
-                    MatchMode::FixedStrings => {
-                        if match_fix_string(line, &pattern) {
-                            println!("{}", line);
-                        }
-                    }
+                if match &matcher {
+                    Matcher::ExtendedRegexp(m) => m.execute(line),
+                    Matcher::FixedStrings(m) => m.execute(line),
+                } {
+                    println!("{}", line);
                 }
             }
         }
@@ -96,19 +113,35 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_match_pattern() {
-        assert_eq!(true, match_pattern("abcdefg", "c"));
-        assert_eq!(true, match_pattern("abcdefg", "fg"));
-        assert_eq!(false, match_pattern("abcdefg", "Z"));
-        assert_eq!(true, match_pattern("abcdefg", "a.c"));
-        assert_eq!(true, match_pattern("aaa bbb", "a+.b+"));
-        assert_eq!(true, match_pattern("aBc", "[aA][bB][cC]"));
+    fn test_extended_regexp_matcher() {
+        let matcher = ExtendedRegexpMatcher::new("c");
+        assert_eq!(true, matcher.execute("abcdefg"));
+        let matcher = ExtendedRegexpMatcher::new("fg");
+        assert_eq!(true, matcher.execute("abcdefg"));
+        let matcher = ExtendedRegexpMatcher::new("Z");
+        assert_eq!(false, matcher.execute("abcdefg"));
+        let matcher = ExtendedRegexpMatcher::new("a.c");
+        assert_eq!(true, matcher.execute("abcdefg"));
+        let matcher = ExtendedRegexpMatcher::new("a+.b+");
+        assert_eq!(true, matcher.execute("aaa bbb"));
+        let matcher = ExtendedRegexpMatcher::new("[aA][bB][cC]");
+        assert_eq!(true, matcher.execute("aBc"));
+        assert_eq!(true, matcher.execute("Abc"));
     }
     #[test]
     fn test_match_fix_string() {
-        assert_eq!(true, match_fix_string("abcdefg", "c"));
-        assert_eq!(true, match_fix_string("abcdefg", "fg"));
-        assert_eq!(false, match_fix_string("abcdefg", "Z"));
-        assert_eq!(false, match_fix_string("abcdefg", "a.c"));
+        let matcher = FixedStringsMatcher::new("c");
+        assert_eq!(true, matcher.execute("abcdefg"));
+        assert_eq!(true, matcher.execute("cccc"));
+        let matcher = FixedStringsMatcher::new("fg");
+        assert_eq!(true, matcher.execute("abcdefg"));
+        let matcher = FixedStringsMatcher::new("Z");
+        assert_eq!(false, matcher.execute("abcdefg"));
+        let matcher = FixedStringsMatcher::new("a.c");
+        assert_eq!(false, matcher.execute("abcdefg"));
+        let matcher = FixedStringsMatcher::new("a+.b+");
+        assert_eq!(false, matcher.execute("aaa bbb"));
+        let matcher = FixedStringsMatcher::new("[aA][bB][cC]");
+        assert_eq!(false, matcher.execute("aBc"));
     }
 }
