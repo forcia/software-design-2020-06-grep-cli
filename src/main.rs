@@ -1,53 +1,10 @@
 use clap::{crate_authors, crate_version, App, Arg};
-use regex::Regex;
-use std::fs::File;
+use std::fs::{File, metadata};
 use std::io::prelude::*;
 use std::path::Path;
-use std::sync::mpsc;
 use std::thread;
-trait MatcherTrait {
-    fn execute(&self, line: &str) -> bool;
-}
+use grep_core::{Matcher, MatcherTrait, FixedStringsMatcher, ExtendedRegexpMatcher, GrepResult};
 
-struct ExtendedRegexpMatcher {
-    pattern: Regex,
-}
-impl ExtendedRegexpMatcher {
-    fn new(pattern: &str) -> ExtendedRegexpMatcher {
-        ExtendedRegexpMatcher {
-            pattern: Regex::new(pattern).unwrap(),
-        }
-    }
-}
-impl MatcherTrait for ExtendedRegexpMatcher {
-    fn execute(&self, line: &str) -> bool {
-        self.pattern.is_match(line)
-    }
-}
-
-struct FixedStringsMatcher<'a> {
-    pattern: &'a str,
-}
-impl<'a> FixedStringsMatcher<'a> {
-    fn new(pattern: &str) -> FixedStringsMatcher {
-        FixedStringsMatcher { pattern: pattern }
-    }
-}
-impl<'a> MatcherTrait for FixedStringsMatcher<'a> {
-    fn execute(&self, line: &str) -> bool {
-        line.contains(self.pattern)
-    }
-}
-
-enum Matcher<'a> {
-    ExtendedRegexp(ExtendedRegexpMatcher),
-    FixedStrings(FixedStringsMatcher<'a>),
-}
-
-struct GrepResult {
-    file_path: String,
-    hit_lines: Vec<String>,
-}
 fn main() {
     let matches = App::new("grep")
         .version(crate_version!())
@@ -82,17 +39,23 @@ fn main() {
         .collect::<Vec<String>>();
     let is_fixed_strings_mode = matches.is_present("fixed-strings");
 
-    let (tx, rx) = mpsc::channel();
     let mut handles = vec![];
     for file_path in file_pathes {
         let pattern = pattern.clone(); // 'static borrowの回避のため
-        let tx = mpsc::Sender::clone(&tx); // 転送側を複製
         let handle = thread::spawn(move || {
             // Create a path to the desired file
             let path = Path::new(&file_path);
             let display = path.display();
-
+            let mut result = GrepResult {
+                file_path: file_path.clone(),
+                hit_lines: vec![],
+            };
             // Open the path in read-only mode, returns `io::Result<File>`
+            if let Ok(md) = metadata(&path){
+                if md.is_dir(){
+                    return Err(format!("{} is directory", display));
+                }
+            }
             let mut file = match File::open(&path) {
                 Err(why) => panic!("couldn't open {}: {}", display, why.to_string()),
                 Ok(file) => file,
@@ -103,13 +66,9 @@ fn main() {
             } else {
                 Matcher::ExtendedRegexp(ExtendedRegexpMatcher::new(&pattern))
             };
-            let mut result = GrepResult {
-                file_path: file_path.clone(),
-                hit_lines: vec![],
-            };
+
             // Read the file contents into a string, returns `io::Result<usize>`
             let mut s = String::new();
-            // TODO: ディレクトリとファイルを区別する
             match file.read_to_string(&mut s) {
                 Err(why) => panic!("couldn't read {}: {}", display, why.to_string()),
                 Ok(_) => {
@@ -119,27 +78,33 @@ fn main() {
                             Matcher::FixedStrings(m) => m.execute(line),
                         } {
                             result.hit_lines.push(line.to_string());
-                            // println!("{}", line);
                         }
                     }
                 }
             }
-            tx.send(result).unwrap();
+            Ok(result)
         });
         handles.push(handle);
     }
+    let mut errors = vec![];
     for handle in handles {
-        // TODO: エラー処理をする
-        let _ = handle.join().unwrap();
-        let result = rx.recv().unwrap();
-        // TODO: バッファリングをすると高速化できるらしい https://keens.github.io/blog/2017/10/05/rustdekousokunahyoujunshutsuryoku/
-        if result.hit_lines.len() > 0 {
-            println!("{}", result.file_path);
-            for line in result.hit_lines {
-                println!("{}", line);
+        if let Ok(result) = handle.join(){
+            match result {
+                Ok(result) => {
+                    if result.hit_lines.len() > 0 {
+                        for line in result.hit_lines {
+                            println!("{}:{}", result.file_path, line);
+                        }
+                    }
+                }
+                Err(e) => {
+                    errors.push(e);
+                }
             }
-            println!("");
         }
+    }
+    for e in errors{
+        println!("{}", e);
     }
 }
 
