@@ -1,9 +1,14 @@
 use clap::{crate_authors, crate_version, App, Arg};
-use std::fs::{File, metadata};
+use grep_core::generate_matcher;
+use std::fs::{metadata, File};
 use std::io::prelude::*;
 use std::path::Path;
 use std::thread;
-use grep_core::{Matcher, MatcherTrait, FixedStringsMatcher, ExtendedRegexpMatcher, GrepResult};
+
+pub struct GrepResult {
+    pub file_path: String,
+    pub hit_lines: Vec<String>,
+}
 
 fn main() {
     let matches = App::new("grep")
@@ -31,52 +36,47 @@ fn main() {
         )
         .get_matches();
 
-    let pattern = matches.value_of("PATTERNS").unwrap().to_string();
+    let pattern = matches.value_of("PATTERNS").unwrap();
     let file_pathes = matches
         .values_of("FILES")
         .unwrap()
         .map(|x| x.to_string())
         .collect::<Vec<String>>();
     let is_fixed_strings_mode = matches.is_present("fixed-strings");
+    let matcher = generate_matcher(pattern.to_string(), is_fixed_strings_mode);
 
     let mut handles = vec![];
     for file_path in file_pathes {
-        let pattern = pattern.clone(); // 'static borrowの回避のため
+        let matcher = matcher.clone();
         let handle = thread::spawn(move || {
-            // Create a path to the desired file
             let path = Path::new(&file_path);
             let display = path.display();
             let mut result = GrepResult {
                 file_path: file_path.clone(),
                 hit_lines: vec![],
             };
-            // Open the path in read-only mode, returns `io::Result<File>`
-            if let Ok(md) = metadata(&path){
-                if md.is_dir(){
-                    return Err(format!("{} is directory", display));
+            match metadata(&path) {
+                Ok(md) => {
+                    if md.is_dir() {
+                        return Err(format!("{} is directory", display));
+                    }
+                }
+                Err(e) => {
+                    return Err(format!("{}: {}", e.to_string(), display));
                 }
             }
+
             let mut file = match File::open(&path) {
                 Err(why) => panic!("couldn't open {}: {}", display, why.to_string()),
                 Ok(file) => file,
             };
-
-            let matcher = if is_fixed_strings_mode {
-                Matcher::FixedStrings(FixedStringsMatcher::new(&pattern.as_str()))
-            } else {
-                Matcher::ExtendedRegexp(ExtendedRegexpMatcher::new(&pattern))
-            };
-
             // Read the file contents into a string, returns `io::Result<usize>`
             let mut s = String::new();
             match file.read_to_string(&mut s) {
-                Err(why) => panic!("couldn't read {}: {}", display, why.to_string()),
+                Err(why) => return Err(format!("couldn't read {}: {}", display, why.to_string())),
                 Ok(_) => {
                     for line in s.lines() {
-                        if match &matcher {
-                            Matcher::ExtendedRegexp(m) => m.execute(line),
-                            Matcher::FixedStrings(m) => m.execute(line),
-                        } {
+                        if matcher.execute(line) {
                             result.hit_lines.push(line.to_string());
                         }
                     }
@@ -86,9 +86,10 @@ fn main() {
         });
         handles.push(handle);
     }
+
     let mut errors = vec![];
     for handle in handles {
-        if let Ok(result) = handle.join(){
+        if let Ok(result) = handle.join() {
             match result {
                 Ok(result) => {
                     if result.hit_lines.len() > 0 {
@@ -103,45 +104,7 @@ fn main() {
             }
         }
     }
-    for e in errors{
+    for e in errors {
         println!("{}", e);
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_extended_regexp_matcher() {
-        let matcher = ExtendedRegexpMatcher::new("c");
-        assert_eq!(true, matcher.execute("abcdefg"));
-        let matcher = ExtendedRegexpMatcher::new("fg");
-        assert_eq!(true, matcher.execute("abcdefg"));
-        let matcher = ExtendedRegexpMatcher::new("Z");
-        assert_eq!(false, matcher.execute("abcdefg"));
-        let matcher = ExtendedRegexpMatcher::new("a.c");
-        assert_eq!(true, matcher.execute("abcdefg"));
-        let matcher = ExtendedRegexpMatcher::new("a+.b+");
-        assert_eq!(true, matcher.execute("aaa bbb"));
-        let matcher = ExtendedRegexpMatcher::new("[aA][bB][cC]");
-        assert_eq!(true, matcher.execute("aBc"));
-        assert_eq!(true, matcher.execute("Abc"));
-    }
-    #[test]
-    fn test_match_fix_string() {
-        let matcher = FixedStringsMatcher::new("c");
-        assert_eq!(true, matcher.execute("abcdefg"));
-        assert_eq!(true, matcher.execute("cccc"));
-        let matcher = FixedStringsMatcher::new("fg");
-        assert_eq!(true, matcher.execute("abcdefg"));
-        let matcher = FixedStringsMatcher::new("Z");
-        assert_eq!(false, matcher.execute("abcdefg"));
-        let matcher = FixedStringsMatcher::new("a.c");
-        assert_eq!(false, matcher.execute("abcdefg"));
-        let matcher = FixedStringsMatcher::new("a+.b+");
-        assert_eq!(false, matcher.execute("aaa bbb"));
-        let matcher = FixedStringsMatcher::new("[aA][bB][cC]");
-        assert_eq!(false, matcher.execute("aBc"));
     }
 }

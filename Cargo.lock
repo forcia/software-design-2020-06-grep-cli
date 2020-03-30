@@ -52,8 +52,8 @@ dependencies = [
 
 [[package]]
 name = "grep-core"
-version = "0.1.2"
-source = "git+http://gitlab.fdev/matsumoto/grep-core.git#edbdbf95819ccd1f43c2c9f83716e8058ea9f894"
+version = "0.1.4"
+source = "git+http://gitlab.fdev/matsumoto/grep-core.git#e081df355f491eace57c450d100cd84d50556bb5"
 dependencies = [
  "regex",
 ]
