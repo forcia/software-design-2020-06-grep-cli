@@ -1,5 +1,5 @@
 use clap::{crate_authors, crate_version, App, Arg};
-use grep_core::generate_matcher;
+use grep_core::Matcher;
 use std::fs::{metadata, File};
 use std::io::prelude::*;
 use std::path::Path;
@@ -43,7 +43,7 @@ fn main() {
         .map(|x| x.to_string())
         .collect::<Vec<String>>();
     let is_fixed_strings_mode = matches.is_present("fixed-strings");
-    let matcher = generate_matcher(pattern.to_string(), is_fixed_strings_mode);
+    let matcher = Matcher::new(pattern.to_string(), is_fixed_strings_mode);//generate_matcher(pattern.to_string(), is_fixed_strings_mode);
 
     let mut handles = vec![];
     for file_path in file_pathes {
