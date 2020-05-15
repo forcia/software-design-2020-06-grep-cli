@@ -1,5 +1,5 @@
 [package]
-name = "grep-rs"
+name = "grep-cli"
 version = "0.1.0"
 authors = ["matsumoto <kentaro_matsumoto@forcia.com>"]
 edition = "2018"

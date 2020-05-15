@@ -51,19 +51,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "grep-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "grep-core",
+]
+
+[[package]]
 name = "grep-core"
 version = "0.1.4"
 source = "git+https://github.com/forcia/software-design-2020-06-grep-core.git#d3a2879b05abe53caaa6ebe8b9bd9ae0681074a5"
 dependencies = [
  "regex",
-]
-
-[[package]]
-name = "grep-rs"
-version = "0.1.0"
-dependencies = [
- "clap",
- "grep-core",
 ]
 
 [[package]]
