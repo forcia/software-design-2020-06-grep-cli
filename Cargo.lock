@@ -53,7 +53,7 @@ dependencies = [
 [[package]]
 name = "grep-core"
 version = "0.1.4"
-source = "git+http://gitlab.fdev/matsumoto/grep-core.git#e081df355f491eace57c450d100cd84d50556bb5"
+source = "git+https://github.com/forcia/software-design-2020-06-grep-core.git#d3a2879b05abe53caaa6ebe8b9bd9ae0681074a5"
 dependencies = [
  "regex",
 ]
